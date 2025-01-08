@@ -6,6 +6,7 @@ import os
 import json
 import time
 import datetime
+import random
 import numpy as np
 # Data Processing Libraries
 import pandas as pd
@@ -40,13 +41,47 @@ def olov2categorydata(ids):
         catids.append(pair['id'])
     return names,catids
 
-def olov2itemsdata(ids,catids):
+def olov2itemsdata(ids):
 
-    for catid in catids:
-        url = f'https://clover.com/olov2service/v1/item/{ids}/searchItemByCategory/{catids}'
-        response = requests.get(url)
-        data = response.json()
-        print("The category id is"+ str(catid)+ "The data is "+ str(data))
+    
+    url = f'https://www.clover.com/olov2service/v1/item/{ids}/searchItem'
+    payload = json.dumps({
+    "limit": 100,
+    "pageIndex": 1,
+    "sortOrderColumns": [
+    "name"
+    ],
+    "searchQuery": "",
+    "itemType": "REGULAR",
+    "sortBy": "ASC"
+    })
+    headers = {
+    'Content-Type': 'application/json',
+    'X-Clover-Appenv': 'dev::dev1'
+    }
+    response = requests.request("GET", url, headers=headers, data=payload)
+    try:
+        data = json.loads(response.text)
+        #print(data)
+    except requests.JSONDecodeError:
+        print("Invalid JSON. Defaulting to an empty dictionary.")
+        #print(data)
+        data = []  # Default to an empty dictionary
+    except Exception as e:  # Handles other exceptions like network issues
+        #print(f"An error occurred: {e}")
+        data = []  # Default to an empty list    
+        
+    #print(data)
+    if ("elements" in data) and (isinstance(data["elements"], list)) and (len(data['elements'])>0):
+        item_names = [item["name"] for item in data["elements"]]
+        if(len(item_names)>10):
+            random_selection = random.sample(item_names, 10)
+            return random_selection
+        else:
+             return item_names
+    else:
+        return 'No item name found for this merchant'
+        
 
     
 
@@ -63,12 +98,16 @@ def snowflakeconnection(mid):
 
 # sample query
 
-    mmetadata_query = cs.execute(f"""select * from northamerica.summary.merchant_metadata as ab join sigma.sigma.view_nam_business_mcc_ce1083533b604506b25d6876c697e6bd_mat as cd 
-    on ab.mcc_code = cd."Mcc Code"
-    where is_demo = FALSE
-    and account_status_active = 'TRUE'
-    and COLO_MERCHANT_PROFILE = 'Enabled' 
-    and ab.uuid = '{mid}';""")
+    mmetadata_query = cs.execute(f"""select mm.*, sg.*
+    
+from northamerica.summary.merchant_metadata mm 
+join northamerica.base.online_order_merchant_provider oomp on mm.id = oomp.merchant_id
+join northamerica.base.online_order_provider oop on oomp.provider_id = oop.id
+join sigma.sigma.view_NAM_BUSINESS_MCC_CE1083533B604506B25D6876C697E6BD_MAT sg on mm.mcc_code = sg."Mcc Code" 
+where oop.name in ('Clover Online Shopping','Clover Online Booking')
+    and mm.is_demo = False
+    and mm.account_status_active = True
+    and mm.uuid = '{mid}';""")
 
     Data = mmetadata_query.fetch_pandas_all()
     #print(type(Data))
@@ -88,7 +127,7 @@ def snowflakeconnection(mid):
 async def update_item(merchant_uuid: str):
     mydata = olov2datacallmerchantmetadata(merchant_uuid)
     catnames, catids = olov2categorydata(merchant_uuid)
-    #olov2itemsdata(merchant_uuid,catids)
+    itemnames = olov2itemsdata(merchant_uuid)
 
     MerchantName = mydata.get('name')
     Phone = mydata.get('phone')
@@ -101,6 +140,6 @@ async def update_item(merchant_uuid: str):
 
 
     
-    results = {"name": MerchantName,"Address": Address,"catData":catnames,"catids":catids,"product_sub_vertical":product_sub_vertical}
+    results = {"name": MerchantName,"Address": Address,"catData":catnames,"catids":catids,"product_sub_vertical":product_sub_vertical,"item names":itemnames}
     
     return results
