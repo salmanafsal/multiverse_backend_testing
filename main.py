@@ -17,9 +17,40 @@ from pathlib import Path
 import bcrypt
 from fastapi import  HTTPException, Depends
 
+from jose import JWTError, jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Security
+
+JWT_SECRET_KEY = "test-secret-key"  # Use a more secure random key in production
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_TIME_MINUTES = 1440  # 24 hours
+
+security = HTTPBearer()
+
 app = FastAPI()
 
 CREDENTIALS_FILE = "/Users/salman.afzal/Downloads/MultiverseBackendTesting/model/credentials.json"
+
+
+def create_jwt_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.datetime.utcnow() + datetime.timedelta(minutes=JWT_EXPIRATION_TIME_MINUTES)
+    to_encode.update({"exp": int(expire.timestamp())})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+def decode_jwt_token(token: str):
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+# Extracts user info from token
+def get_current_user(token: HTTPAuthorizationCredentials = Security(security)):
+    print(token.credentials)
+    payload = decode_jwt_token(token.credentials)
+    return payload.get("email")
 
 class User(BaseModel):
     email: str
@@ -71,6 +102,16 @@ def authenticate_user(user: User):
             return stored_user  # Authentication successful
     return None  # Authentication failed
 
+@app.post("/login")
+async def login(user: User):
+    authenticated_user = authenticate_user(user)
+    if not authenticated_user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    token = create_jwt_token({"email": user.email})
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @app.get("/user")
 async def get_user(user: User):
     authenticated_user = authenticate_user(user)
@@ -97,8 +138,9 @@ cipher = Fernet(ENCRYPTION_KEY)
 
 
 @app.get("/snippets")
-async def getAllSnippets():
+async def getAllSnippets(current_user: str = Security(get_current_user)):
     
+   
    file_path = "/Users/salman.afzal/Downloads/MultiverseBackendTesting/model/seedData.json"
 
    try:
