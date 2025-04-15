@@ -16,6 +16,16 @@ import base64
 from pathlib import Path
 import bcrypt
 from fastapi import  HTTPException, Depends
+from fastapi import FastAPI, Request, Depends
+from fastapi.responses import RedirectResponse, HTMLResponse
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+from starlette.middleware.sessions import SessionMiddleware
+import os
+
+# Load env vars
+from dotenv import load_dotenv
+load_dotenv()
 
 from jose import JWTError, jwt
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -28,6 +38,20 @@ JWT_EXPIRATION_TIME_MINUTES = 1440  # 24 hours
 security = HTTPBearer()
 
 app = FastAPI()
+
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("AUTH0_CLIENT_SECRET"))
+config = Config('.env')
+oauth = OAuth(config)
+
+auth0 = oauth.register(
+    name='auth0',
+    client_id=os.getenv("AUTH0_CLIENT_ID"),
+    client_secret=os.getenv("AUTH0_CLIENT_SECRET"),
+    client_kwargs={
+        'scope': 'openid profile email',
+    },
+    server_metadata_url=f'https://{os.getenv("AUTH0_DOMAIN")}/.well-known/openid-configuration',
+)
 
 CREDENTIALS_FILE = "/Users/salman.afzal/Downloads/MultiverseBackendTesting/model/credentials.json"
 
@@ -203,6 +227,33 @@ async def postAllSnippets(snippet: Snippet):
 
    with open(file_path, "w") as file:
       json.dump(seed_data, file, indent=4)
-
     
    return seed_data
+
+
+@app.get("/")
+async def home(request: Request):
+    user = request.session.get('user')
+    if user:
+        return HTMLResponse(f"<h1>Hello {user['name']}</h1><a href='/logout'>Logout</a>")
+    return HTMLResponse("<a href='/login'>Login with Google</a>")
+
+@app.get("/login")
+async def login(request: Request):
+    print("🧪 AUTH0_DOMAIN:", os.getenv("AUTH0_DOMAIN"))
+    return await auth0.authorize_redirect(request, os.getenv("AUTH0_CALLBACK_URL"))
+
+@app.get("/callback")
+async def callback(request: Request):
+    token = await auth0.authorize_access_token(request)
+    print("Token response:", token)
+    user = token.get("userinfo")
+    request.session['user'] = user
+    return RedirectResponse("/")
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.pop('user', None)
+    return RedirectResponse(
+        f"https://{os.getenv('AUTH0_DOMAIN')}/v2/logout?client_id={os.getenv('AUTH0_CLIENT_ID')}&returnTo=http://localhost:8000"
+    )
